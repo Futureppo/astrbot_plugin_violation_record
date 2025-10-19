@@ -170,31 +170,45 @@ class ViolationRecordPlugin(Star):
             
             if result.get("retcode") == 0 and result.get("data"):
                 data = result["data"]
-                # 返回完整的认证信息
-                return {
+                
+                # 先打印原始数据看看有什么字段
+                logger.debug(f"OAuth20 返回的原始数据: {data}")
+                
+                # 按照 TypeScript 代码的方式：将 minico_token 重命名为 token，然后展开所有字段
+                auth_info = {
                     "appid": appid,
-                    "minico_token": data.get("minico_token"),
-                    "uin": data.get("uin"),
-                    "akey": data.get("akey"),
-                    "skey": data.get("skey")
+                    **data  # 展开所有字段
                 }
+                
+                # 重命名 minico_token 为 token
+                if "minico_token" in auth_info:
+                    auth_info["token"] = auth_info.pop("minico_token")
+                
+                # 删除不需要的字段
+                if "expire" in auth_info:
+                    del auth_info["expire"]
+                
+                logger.debug(f"最终认证信息: {auth_info}")
+                return auth_info
             
             raise Exception(f"获取 token 失败 [{result.get('retcode')}]: {result.get('message', '未知错误')}")
     
     async def get_record(self, auth_data: dict, num: int = 20) -> dict:
         """查询违规记录"""
-        # 构建 URL 参数
-        params = {
-            "appid": auth_data["appid"],
-            "token": auth_data["minico_token"],
-            "uin": auth_data["uin"],
-            "akey": auth_data["akey"],
-            "skey": auth_data["skey"]
-        }
-        
-        param_str = "&".join([f"{k}={v}" for k, v in params.items()])
+        # 构建 URL 参数 - 按照 TypeScript 代码的方式，包含 appid 与 OAuth 返回的全部字段
+        # auth_data 形如：{"appid": 1109907872, "openid": "...", "token": "..."}
+        params = {**auth_data}
+        # 确保 appid 存在（理论上已存在）
+        if "appid" not in params:
+            params["appid"] = 1109907872
+
+        # 构建参数字符串（不做额外编码以保持与 TS 逻辑一致）
+        param_str = "&".join([f"{k}={str(v)}" for k, v in params.items()])
         url = f"https://minico.qq.com/minico/cgiproxy/v3_release/v3/getillegalityhistory?{param_str}"
         
+        logger.debug(f"查询 URL: {url}")
+        
+        # 构建请求体
         body = {
             "com": {
                 "src": 0,
@@ -214,6 +228,9 @@ class ViolationRecordPlugin(Star):
             response = await client.post(url, json=body, headers=headers)
             result = response.json()
             
+            # 添加调试日志
+            logger.debug(f"查询违规记录响应: {result}")
+            
             return result
     
     def format_violation_record(self, records: list) -> str:
@@ -224,8 +241,18 @@ class ViolationRecordPlugin(Star):
         output = [f"查询到 {len(records)} 条违规记录：\n"]
         
         for i, record in enumerate(records, 1):
-            reason_code = record.get("reason", 999)
-            violation_time = record.get("time", 0)
+            # 兼容字符串/数字类型字段
+            reason_raw = record.get("reason", 999)
+            try:
+                reason_code = int(reason_raw)
+            except Exception:
+                reason_code = 999
+
+            time_raw = record.get("time", 0)
+            try:
+                violation_time = int(time_raw)
+            except Exception:
+                violation_time = 0
             
             # 查找对应的违规类型描述
             violation_info = None
@@ -237,7 +264,10 @@ class ViolationRecordPlugin(Star):
             if not violation_info:
                 violation_info = violationdata.get("LOCKTOWER_REASON_SMART_OTHER", {})
             
-            time_str = datetime.fromtimestamp(violation_time).strftime("%Y-%m-%d %H:%M:%S") if violation_time else "未知"
+            time_str = (
+                datetime.fromtimestamp(violation_time).strftime("%Y-%m-%d %H:%M:%S")
+                if violation_time else "未知"
+            )
             
             output.append(f"【违规 {i}】")
             output.append(f"时间: {time_str}")
@@ -317,18 +347,29 @@ class ViolationRecordPlugin(Star):
             # 查询违规记录
             result = await self.get_record(auth_data)
             
-            if result.get("retcode") == 0:
-                records = result.get("records", [])
-                total_size = result.get("totalSize", 0)
-                
-                if total_size < 1:
-                    yield event.plain_result("未查询到违规记录。")
-                else:
-                    # 格式化并输出结果
-                    formatted_result = self.format_violation_record(records)
-                    yield event.plain_result(formatted_result)
+            # 检查返回结果 - 兼容 retcode 与 ret；注意 0 也可能出现，不能用 or
+            ret_code = result.get("retcode")
+            if ret_code is None:
+                ret_code = result.get("ret")
+            error_msg = result.get("message") or result.get("msg", "未知错误")
+            
+            logger.info(f"查询结果: retcode={ret_code}, totalSize={result.get('totalSize')}")
+            
+            # 如果返回码不为 0 或 None，说明查询失败
+            if ret_code is not None and ret_code != 0:
+                yield event.plain_result(f"查询失败 [{ret_code}]: {error_msg}")
+                return
+            
+            # 检查是否有违规记录
+            records = result.get("records", [])
+            total_size = result.get("totalSize", 0)
+            
+            if total_size < 1 and not records:
+                yield event.plain_result("未查询到违规记录。")
             else:
-                yield event.plain_result(f"查询失败 [{result.get('retcode')}]: {result.get('message', '未知错误')}")
+                # 格式化并输出结果
+                formatted_result = self.format_violation_record(records)
+                yield event.plain_result(formatted_result)
                 
         except Exception as e:
             logger.error(f"查询违规记录失败: {e}", exc_info=True)
