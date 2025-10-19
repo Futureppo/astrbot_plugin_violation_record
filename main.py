@@ -88,7 +88,7 @@ class ViolationRecordPlugin(Star):
     """
     查询QQ账号违规记录的插件。
     """
-    
+
     def __init__(self, context: Context):
         super().__init__(context)
         self.headers = {
@@ -119,19 +119,25 @@ class ViolationRecordPlugin(Star):
             response = await client.get(url, headers=self.headers)
             result = response.json()
             
-            if result.get("code") == 0 and result.get("data"):
-                data = result["data"]
-                # 扫码成功且已确认
-                if data.get("state") == 2 and data.get("ticket"):
-                    return True, data["ticket"]
+            # 检查返回码
+            if result.get("code") != 0:
+                # 如果返回码不是0，说明出错了，但不抛出异常，继续轮询
+                logger.debug(f"轮询状态: code={result.get('code')}, message={result.get('message')}")
+                return False, ""
+            
+            data = result.get("data", {})
+            # 检查是否授权成功 (ok === 1 表示已授权)
+            if data.get("ok") == 1 and data.get("ticket"):
+                return True, data["ticket"]
             
             return False, ""
     
-    async def get_token_from_ticket(self, ticket: str) -> str:
-        """用 ticket 直接换取 access_token"""
-        url = "https://q.qq.com/ide/devtoolAuth/GetUserAuthInfo"
+    async def get_code_from_ticket(self, ticket: str) -> str:
+        """用 ticket 换取 code"""
+        url = "https://q.qq.com/ide/login"
         
         data = {
+            "appid": 1109907872,
             "ticket": ticket
         }
         
@@ -139,27 +145,73 @@ class ViolationRecordPlugin(Star):
             response = await client.post(url, json=data, headers=self.headers)
             result = response.json()
             
-            if result.get("code") == 0 and result.get("data"):
-                data = result["data"]
-                if data.get("access_token"):
-                    return data["access_token"]
+            if result.get("code"):
+                return result["code"]
             
-            raise Exception(f"获取 access_token 失败: {result.get('message', '未知错误')}")
+            raise Exception(f"获取 code 失败: {result.get('message', '未知错误')}")
     
-    async def get_record(self, token: str, num: int = 20) -> dict:
-        """用 access_token 查询违规记录"""
-        url = "https://minico.qq.com/minico/cgiproxy/v3_release/v3/getillegalityhistory"
+    async def get_token_from_code(self, code: str, appid: int = 1109907872) -> dict:
+        """用 code 换取 minico_token 等信息"""
+        url = "https://minico.qq.com/minico/oauth20?uin=QQ%E5%AE%89%E5%85%A8%E4%B8%AD%E5%BF%83"
         
         data = {
-            "access_token": token,
-            "cmd": 0,
-            "offset": 0,
-            "num": num,
-            "platform": "desktop"
+            "code": code,
+            "appid": appid,
+            "platform": "qq"
+        }
+        
+        headers = {
+            'Content-Type': 'application/json'
         }
         
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=data)
+            response = await client.post(url, json=data, headers=headers)
+            result = response.json()
+            
+            if result.get("retcode") == 0 and result.get("data"):
+                data = result["data"]
+                # 返回完整的认证信息
+                return {
+                    "appid": appid,
+                    "minico_token": data.get("minico_token"),
+                    "uin": data.get("uin"),
+                    "akey": data.get("akey"),
+                    "skey": data.get("skey")
+                }
+            
+            raise Exception(f"获取 token 失败 [{result.get('retcode')}]: {result.get('message', '未知错误')}")
+    
+    async def get_record(self, auth_data: dict, num: int = 20) -> dict:
+        """查询违规记录"""
+        # 构建 URL 参数
+        params = {
+            "appid": auth_data["appid"],
+            "token": auth_data["minico_token"],
+            "uin": auth_data["uin"],
+            "akey": auth_data["akey"],
+            "skey": auth_data["skey"]
+        }
+        
+        param_str = "&".join([f"{k}={v}" for k, v in params.items()])
+        url = f"https://minico.qq.com/minico/cgiproxy/v3_release/v3/getillegalityhistory?{param_str}"
+        
+        body = {
+            "com": {
+                "src": 0,
+                "scene": 1001,
+                "platform": 2,
+                "version": "8.9.85.12820"
+            },
+            "pageNum": 0,
+            "pageSize": num
+        }
+        
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=body, headers=headers)
             result = response.json()
             
             return result
@@ -254,22 +306,29 @@ class ViolationRecordPlugin(Star):
                 yield event.plain_result("授权超时，请重新尝试。")
                 return
             
-            # 用 ticket 换取 access_token
-            access_token = await self.get_token_from_ticket(ticket)
-            logger.info(f"获取到 access_token")
+            # 用 ticket 换取 code
+            code = await self.get_code_from_ticket(ticket)
+            logger.info(f"获取到 code")
+            
+            # 用 code 换取认证信息
+            auth_data = await self.get_token_from_code(code)
+            logger.info(f"获取到认证信息")
             
             # 查询违规记录
-            result = await self.get_record(access_token)
+            result = await self.get_record(auth_data)
             
-            if result.get("ret") == 0:
-                data = result.get("data", {})
-                records = data.get("records", [])
+            if result.get("retcode") == 0:
+                records = result.get("records", [])
+                total_size = result.get("totalSize", 0)
                 
-                # 格式化并输出结果
-                formatted_result = self.format_violation_record(records)
-                yield event.plain_result(formatted_result)
+                if total_size < 1:
+                    yield event.plain_result("未查询到违规记录。")
+                else:
+                    # 格式化并输出结果
+                    formatted_result = self.format_violation_record(records)
+                    yield event.plain_result(formatted_result)
             else:
-                yield event.plain_result(f"查询失败: {result.get('msg', '未知错误')}")
+                yield event.plain_result(f"查询失败 [{result.get('retcode')}]: {result.get('message', '未知错误')}")
                 
         except Exception as e:
             logger.error(f"查询违规记录失败: {e}", exc_info=True)
