@@ -1,15 +1,6 @@
 name: astrbot_plugin_violation_record 
-desc: QQ查询违规插件 - 通过授权登录查询QQ账号违规记录
-help: | 
-  使用指令：
-  - /查违规 或 /违规查询 或 /我的违规
-  
-  功能说明：
-  1. 发送指令后会生成授权二维码和链接
-  2. 使用手机QQ扫描二维码或访问链接授权
-  3. 自动查询并返回违规记录
-  
-  注意：需要使用本人QQ授权才能查询自己的违规记录
-version: v1.0.0
+desc: QQ查询违规插件 
+help: 发送指令 违规记录 查询
+version: v0.0.1 
 author: Futureppo 
 repo: https://github.com/Futureppo/astrbot_plugin_violation_record
