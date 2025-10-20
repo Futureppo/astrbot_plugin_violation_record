@@ -1,6 +1,6 @@
 name: astrbot_plugin_violation_record 
-desc: QQ查询违规插件 
-help: 发送指令 违规记录 查询
+desc: QQ查询账号违规记录插件
+help: 发送指令 查违规 查询账号违规记录
 version: v0.0.1 
 author: Futureppo 
 repo: https://github.com/Futureppo/astrbot_plugin_violation_record
