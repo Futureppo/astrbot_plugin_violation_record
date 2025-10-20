@@ -1,99 +1,34 @@
 # AstrBot QQ违规记录查询插件
 
-## 功能介绍
-
-这是一个用于查询 QQ 账号违规记录的 AstrBot 插件。通过扫描二维码登录，自动获取并展示您的 QQ 账号违规历史记录。
-
-## 主要特性
-
-- 🔐 **安全登录**：通过 QQ 官方二维码扫码登录，安全可靠
-- 📋 **详细记录**：显示违规时间、原因、类型等详细信息
-- 🚀 **自动化流程**：一键查询，自动完成所有认证步骤
-- 📱 **用户友好**：清晰的提示信息和格式化输出
-
-## 使用方法
-
-### 1. 发送查询指令
-
+## 使用
 在聊天中发送以下任一指令：
 - `/查违规`
 - `/违规查询`
 - `/我的违规`
 
-### 2. 扫描二维码
+## Star History
 
-机器人会生成一个二维码图片，使用手机 QQ 扫描该二维码并确认登录。
+<a href="https://star-history.com/#Futureppo/astrbot_plugin_violation_record&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Futureppo/astrbot_plugin_violation_record&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Futureppo/astrbot_plugin_violation_record&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Futureppo/astrbot_plugin_violation_record&type=Date" />
+ </picture>
+</a>
 
-### 3. 查看结果
+## 😊 鸣谢
 
-扫码成功后，机器人会自动查询并返回您的违规记录。如果没有违规记录，会显示"恭喜！未查询到违规记录"。
+本项目的开发参考了以下开源项目部分代码，排名不分先后
 
-## 查询流程
+**部分代码借鉴**
 
-插件按照以下步骤完成查询：
-
-1. **获取登录代码** - 从腾讯服务器获取临时授权码 (logincode)
-2. **生成授权链接** - 生成二维码和授权链接供用户访问
-3. **轮询授权状态** - 等待用户扫码或访问链接确认（最长 60 秒）
-4. **换取临时票据** - 授权成功后获取 ticket
-5. **获取访问令牌** - 用 ticket 换取 access_token
-6. **查询违规记录** - 用 access_token 查询违规历史
-
-## 违规类型
-
-插件支持识别多种违规类型，包括但不限于：
-
-- 发布/传播违法违规信息
-- 异常添加好友
-- 违规注册 QQ 账号
-- 传播色情、暴力、敏感信息
-- 传播诈骗信息或涉嫌诈骗行为
-- 使用恶意插件
-- 业务违规操作
-- 更多...（详见代码中的 `violationdata` 字典）
-
-## 依赖项
-
-- `httpx>=0.24.0` - HTTP 客户端
-- `qrcode>=7.4.2` - 二维码生成
-- `Pillow>=10.0.0` - 图像处理
-
-## 注意事项
-
-⚠️ **重要提示**：
-- 本插件仅用于查询本人 QQ 账号的违规记录
-- 需要使用手机 QQ 扫码登录才能查询
-- 二维码有效期为 60 秒，超时需重新查询
-- 所有数据通过腾讯官方 API 获取，安全可靠
-- 本插件不会存储您的登录凭证
-
-## 技术实现
-
-- 基于 AstrBot 插件框架开发
-- 使用异步 HTTP 请求提高性能
-- 实时生成二维码图片
-- 轮询机制检测扫码状态
-- 完整的错误处理和日志记录
-
-## 开发者
-
-- **作者**: Futureppo
-- **版本**: v1.0.0
-- **仓库**: https://github.com/Futureppo/astrbot_plugin_violation_record
-
-## 许可证
-
-本项目遵循相应的开源许可证，具体请查看仓库。
+- [yusheng929/karin-plugin-ling](https://github.com/yusheng929/karin-plugin-ling/tree/main)
+- 更多待补充...
 
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
-## 更新日志
 
-### v1.0.0 (2025-01-20)
-- ✨ 初始版本发布
-- 🔐 实现扫码登录功能
-- 📋 实现违规记录查询
-- 🎨 优化输出格式
+
 

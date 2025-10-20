@@ -84,6 +84,7 @@ violationlist = list(violationdata.values())
     "0.0.1",
     "https://github.com/Futureppo/astrbot_plugin_violation_record",
 )
+
 class ViolationRecordPlugin(Star):
     """
     查询QQ账号违规记录的插件。
@@ -119,14 +120,12 @@ class ViolationRecordPlugin(Star):
             response = await client.get(url, headers=self.headers)
             result = response.json()
             
-            # 检查返回码
+
             if result.get("code") != 0:
-                # 如果返回码不是0，说明出错了，但不抛出异常，继续轮询
                 logger.debug(f"轮询状态: code={result.get('code')}, message={result.get('message')}")
                 return False, ""
             
             data = result.get("data", {})
-            # 检查是否授权成功 (ok === 1 表示已授权)
             if data.get("ok") == 1 and data.get("ticket"):
                 return True, data["ticket"]
             
@@ -171,44 +170,36 @@ class ViolationRecordPlugin(Star):
             if result.get("retcode") == 0 and result.get("data"):
                 data = result["data"]
                 
-                # 先打印原始数据看看有什么字段
                 logger.debug(f"OAuth20 返回的原始数据: {data}")
                 
-                # 按照 TypeScript 代码的方式：将 minico_token 重命名为 token，然后展开所有字段
                 auth_info = {
                     "appid": appid,
-                    **data  # 展开所有字段
+                    **data
                 }
                 
                 # 重命名 minico_token 为 token
                 if "minico_token" in auth_info:
                     auth_info["token"] = auth_info.pop("minico_token")
                 
-                # 删除不需要的字段
                 if "expire" in auth_info:
                     del auth_info["expire"]
                 
-                logger.debug(f"最终认证信息: {auth_info}")
+                # logger.debug(f"最终认证信息: {auth_info}")
                 return auth_info
             
             raise Exception(f"获取 token 失败 [{result.get('retcode')}]: {result.get('message', '未知错误')}")
     
     async def get_record(self, auth_data: dict, num: int = 20) -> dict:
         """查询违规记录"""
-        # 构建 URL 参数 - 按照 TypeScript 代码的方式，包含 appid 与 OAuth 返回的全部字段
-        # auth_data 形如：{"appid": 1109907872, "openid": "...", "token": "..."}
         params = {**auth_data}
-        # 确保 appid 存在（理论上已存在）
         if "appid" not in params:
             params["appid"] = 1109907872
 
-        # 构建参数字符串（不做额外编码以保持与 TS 逻辑一致）
         param_str = "&".join([f"{k}={str(v)}" for k, v in params.items()])
         url = f"https://minico.qq.com/minico/cgiproxy/v3_release/v3/getillegalityhistory?{param_str}"
         
         logger.debug(f"查询 URL: {url}")
         
-        # 构建请求体
         body = {
             "com": {
                 "src": 0,
@@ -228,8 +219,7 @@ class ViolationRecordPlugin(Star):
             response = await client.post(url, json=body, headers=headers)
             result = response.json()
             
-            # 添加调试日志
-            logger.debug(f"查询违规记录响应: {result}")
+            # logger.debug(f"查询违规记录响应: {result}")
             
             return result
     
@@ -241,7 +231,6 @@ class ViolationRecordPlugin(Star):
         output = [f"查询到 {len(records)} 条违规记录：\n"]
         
         for i, record in enumerate(records, 1):
-            # 兼容字符串/数字类型字段
             reason_raw = record.get("reason", 999)
             try:
                 reason_code = int(reason_raw)
@@ -253,8 +242,7 @@ class ViolationRecordPlugin(Star):
                 violation_time = int(time_raw)
             except Exception:
                 violation_time = 0
-            
-            # 查找对应的违规类型描述
+
             violation_info = None
             for key, value in violationdata.items():
                 if value.get("reason") == reason_code:
@@ -298,17 +286,14 @@ class ViolationRecordPlugin(Star):
     async def query_violation(self, event: AstrMessageEvent):
         """查询QQ违规记录"""
         try:
-            # 获取登录代码
             yield event.plain_result("正在生成授权登录链接，请稍候...")
             
             logincode = await self.get_login_code()
             logger.info(f"获取到 logincode: {logincode}")
             
-            # 生成授权链接和二维码
             auth_url = f"https://h5.qzone.qq.com/qqq/code/{logincode}?_proxy=1&from=ide"
             qr_image_bytes = self.generate_qrcode(auth_url)
             
-            # 发送二维码和授权链接
             qr_image = Image.fromBytes(qr_image_bytes)
             yield event.chain_result([qr_image])
             yield event.plain_result(f"请在一分钟内通过以下方式授权登录：\n\n1. 扫描上方二维码\n2. 或访问链接：\n{auth_url}\n\n等待授权中... (60秒超时)")
@@ -347,7 +332,7 @@ class ViolationRecordPlugin(Star):
             # 查询违规记录
             result = await self.get_record(auth_data)
             
-            # 检查返回结果 - 兼容 retcode 与 ret；注意 0 也可能出现，不能用 or
+            # 检查返回结果
             ret_code = result.get("retcode")
             if ret_code is None:
                 ret_code = result.get("ret")
@@ -355,7 +340,6 @@ class ViolationRecordPlugin(Star):
             
             logger.info(f"查询结果: retcode={ret_code}, totalSize={result.get('totalSize')}")
             
-            # 如果返回码不为 0 或 None，说明查询失败
             if ret_code is not None and ret_code != 0:
                 yield event.plain_result(f"查询失败 [{ret_code}]: {error_msg}")
                 return
@@ -367,7 +351,6 @@ class ViolationRecordPlugin(Star):
             if total_size < 1 and not records:
                 yield event.plain_result("未查询到违规记录。")
             else:
-                # 格式化并输出结果
                 formatted_result = self.format_violation_record(records)
                 yield event.plain_result(formatted_result)
                 
