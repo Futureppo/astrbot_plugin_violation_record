@@ -81,7 +81,7 @@ violationlist = list(violationdata.values())
     "astrbot_plugin_violation_record",
     "Futureppo",
     "QQ查询账号违规记录插件",
-    "0.0.1",
+    "0.0.2",
     "https://github.com/Futureppo/astrbot_plugin_violation_record",
 )
 
