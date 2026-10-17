@@ -76,6 +76,108 @@ violationdata = {
 
 violationlist = list(violationdata.values())
 
+# ===== BOT 自己拿token免扫码查询(啦啦啦) =====
+
+# SSO 命令, 客户端, QUA 设备参数, 求求你不要超时(
+BOT_SSO_COMMAND = "LightAppSvc.mini_program_auth.GetCode"
+BOT_QUA = "V1_AND_SQ_9.0.90_1234_YYB_D"
+BOT_DEVICE_PARAMS = (
+    "i=cec7510bfa5070a89b234b01d25e567a&imsi=&mac=02:00:00:00:00:00"
+    "&m=ICQQ A6F1&o=0&a=0&sd=0&c64=1&sc=1&p=1080*2221"
+    "&aid=cec7510bfa5070a89b234b01d25e567a&f=0675&mm=00&cf=00&cc=00"
+    "&qimei=&qimei36=&sharpP=1&n=wifi&support_xsj_live=true&client_mod=default"
+)
+BOT_TIMEOUT = 20
+
+# 正在查询中的机器人，避免并发重复查询
+_bot_pending = set()
+
+
+def bot_varint(value):
+    """编码 protobuf varint"""
+    result = bytearray()
+    while value > 0x7F:
+        result.append((value & 0x7F) | 0x80)
+        value >>= 7
+    result.append(value)
+    return bytes(result)
+
+
+def bot_field(number, value):
+    """编一个 pb 字段"""
+    if isinstance(value, int):
+        return bot_varint(number << 3) + bot_varint(value)
+    raw = value.encode("utf-8") if isinstance(value, str) else value
+    return bot_varint((number << 3) | 2) + bot_varint(len(raw)) + raw
+
+
+def build_bot_login_request(uin):
+    """构造 SSO 请求"""
+    return b"".join(
+        (
+            bot_field(1, 3),
+            bot_field(2, BOT_QUA),
+            bot_field(3, BOT_DEVICE_PARAMS),
+            bot_field(4, bot_field(1, "1109907872")),
+            bot_field(5, uin),
+        )
+    )
+
+
+def decode_bot_fields(raw):
+    """解析 pb 字段"""
+    position = 0
+    fields = {} 
+
+    def read_varint():
+        nonlocal position
+        value = 0
+        for shift in range(0, 70, 7):
+            if position >= len(raw):
+                break
+            byte = raw[position]
+            position += 1
+            if shift == 63 and byte > 1:
+                break
+            value |= (byte & 0x7F) << shift
+            if byte < 0x80:
+                return value
+        raise ValueError("无效的 protobuf varint")
+
+    while position < len(raw):
+        tag = read_varint()
+        number, wire_type = tag >> 3, tag & 7
+        
+        if number == 0:
+            raise ValueError("无效的 protobuf 字段")
+        if wire_type == 0:
+            value = read_varint()
+        elif wire_type in (1, 2, 5):
+            size = read_varint() if wire_type == 2 else (8 if wire_type == 1 else 4)
+            if (end := position + size) > len(raw):
+                raise ValueError("protobuf 字段被截断")
+            value = raw[position:end]
+            position = end
+        else:
+            raise ValueError("不支持的 protobuf wire type")
+        fields.setdefault(number, []).append(value)
+    return fields
+
+
+def parse_bot_login_code(packet_hex):
+    """从 GetCode 响应中提取授权码"""
+    body = decode_bot_fields(bytes.fromhex(packet_hex)).get(4, [b""])[0]
+
+    if not isinstance(body, bytes):
+        raise ValueError("无效的登录响应")
+    code = decode_bot_fields(body).get(2, [b""])[0]
+
+    if not isinstance(code, bytes):
+        raise ValueError("无效的登录代码")
+
+    return code.decode("utf-8")
+
+
 
 @register(
     "astrbot_plugin_violation_record",
@@ -358,3 +460,103 @@ class ViolationRecordPlugin(Star):
             logger.error(f"查询违规记录失败: {e}", exc_info=True)
             yield event.plain_result(f"查询出错: {str(e)}")
     
+
+
+    async def get_bot_login_code(self, call_action, uin):
+        """通过 send_packet 大调查一下机器人账号的授权码"""
+        try:
+            response = await asyncio.wait_for(
+                call_action(
+                    "send_packet",
+                    cmd=BOT_SSO_COMMAND,
+                    data=build_bot_login_request(uin).hex(),
+                    rsp=True,
+                    self_id=uin,
+                ),
+                timeout=BOT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise Exception("操, 超时了")
+        except Exception as e:
+            logger.error(f"send_packet 调用失败: {e}")
+            raise Exception("发包失败，看看NC和SL有没有可用更新")
+
+        if isinstance(response, dict):
+            if response.get("retcode") != 0 or response.get("status") != "ok":
+                raise Exception("发包接口调用失败，看看 NC / SL 状态")
+            response = response.get("data")
+        if not isinstance(response, str) or not response:
+            raise Exception("发包接口没有返回有效的响应数据")
+
+        try:
+            code = parse_bot_login_code(response)
+        except Exception:
+            raise Exception("授权码响应格式异常，请检查 QQ 版本")
+        if not code:
+            raise Exception("QQ 未返回授权码，请确认当前机器人账号已登录。")
+        return code
+
+    @filter.command("机器人违规", alias=['bot违规', 'bot查违规'])
+    async def query_bot_violation(self, event: AstrMessageEvent):
+        """免扫码查询当前机器人账号的违规记录"""
+        key = None
+        try:
+            if event.get_platform_name() != "aiocqhttp":
+                yield event.plain_result("请通过支持 send_packet 的 NC 或 SL 使用此指令")
+                return
+
+            bot = getattr(event, "bot", None)
+            if not callable(getattr(bot, "call_action", None)):
+                yield event.plain_result("当前平台不支持 send_packet")
+                return
+
+            uin = str(event.get_self_id() or "")
+            if not uin.isdigit():
+                yield event.plain_result("无法获取当前机器人的 QQ 号")
+                return
+
+            key = (event.get_platform_id(), uin)
+            if key in _bot_pending:
+                yield event.plain_result("当前机器人正在查询，请稍候")
+                return
+            _bot_pending.add(key)
+
+            yield event.plain_result("正在查询当前机器人账号的违规记录，请稍候...")
+
+            code = await self.get_bot_login_code(bot.call_action, uin)
+            auth_data = await self.get_token_from_code(code)
+            result = await self.get_record(auth_data)
+
+            ret_code = result.get("retcode")
+            if ret_code is None:
+                ret_code = result.get("ret")
+            if ret_code is not None and str(ret_code) != "0":
+                error_msg = result.get("message") or result.get("msg", "未知错误")
+                yield event.plain_result(f"查询失败 [{ret_code}]: {error_msg}")
+                return
+
+            records = result.get("records")
+            if records is None and str(result.get("totalSize")) in ("0", "None"):
+                records = []
+            if not isinstance(records, list):
+                yield event.plain_result("违规记录响应格式异常")
+                return
+
+            total_size = result.get("totalSize", len(records))
+            try:
+                total_size = int(total_size)
+            except (TypeError, ValueError):
+                total_size = len(records)
+
+            if total_size < 1 and not records:
+                yield event.plain_result(f"机器人 QQ: {uin}\n未查询到违规记录")
+            else:
+                formatted_result = self.format_violation_record(records)
+                yield event.plain_result(f"机器人 QQ: {uin}\n{formatted_result}")
+
+        except Exception as e:
+            logger.error(f"机器人违规查询失败: {e}", exc_info=True)
+            yield event.plain_result(f"查询出错: {str(e)}")
+        finally:
+            if key is not None:
+                _bot_pending.discard(key)
