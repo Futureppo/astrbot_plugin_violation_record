@@ -498,9 +498,14 @@ class ViolationRecordPlugin(Star):
 
     @filter.command("机器人违规", alias=['bot违规', 'bot查违规'])
     async def query_bot_violation(self, event: AstrMessageEvent):
-        """免扫码查询当前机器人账号的违规记录"""
+        """仅 AstrBot 管理员可免扫码查询当前机器人账号的违规记录"""
         key = None
+        pending_acquired = False
         try:
+            if not event.is_admin():
+                yield event.plain_result("仅 AstrBot 管理员可查询机器人账号的违规记录")
+                return
+
             if event.get_platform_name() != "aiocqhttp":
                 yield event.plain_result("请通过支持 send_packet 的 NC 或 SL 使用此指令")
                 return
@@ -520,6 +525,7 @@ class ViolationRecordPlugin(Star):
                 yield event.plain_result("当前机器人正在查询，请稍候")
                 return
             _bot_pending.add(key)
+            pending_acquired = True
 
             yield event.plain_result("正在查询当前机器人账号的违规记录，请稍候...")
 
@@ -558,5 +564,5 @@ class ViolationRecordPlugin(Star):
             logger.error(f"机器人违规查询失败: {e}", exc_info=True)
             yield event.plain_result(f"查询出错: {str(e)}")
         finally:
-            if key is not None:
+            if pending_acquired:
                 _bot_pending.discard(key)
